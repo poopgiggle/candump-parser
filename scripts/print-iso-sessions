@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+
+import candump_parser
+import sys
+
+if len(sys.argv) < 2:
+    print('need a filename, dummy')
+    sys.exit(-1)
+
+f = open(sys.argv[1])
+
+cm = candump_parser.load(f)
+
+for session in cm.parse_iso_sessions():
+    print(candump_parser.prettify_bytes(session.response_data))
