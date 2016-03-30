@@ -12,4 +12,5 @@ f = open(sys.argv[1])
 cm = candump_parser.load(f)
 
 for session in cm.parse_iso_sessions():
-    print(candump_parser.prettify_bytes(session.response_data))
+    request, response = session.request_response
+    print(repr(request), " ", repr(response))

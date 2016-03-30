@@ -26,6 +26,15 @@ def prettify_bytes(byte_string):
     byte_list = struct.unpack("B"*len(byte_string), byte_string)
     return ",".join(["{:02x}".format(x) for x in byte_list])
 
+def hex_string(byte_string):
+    '''
+    Take byte string and return unseparated hex string
+    '''
+    if type(byte_string) is int:
+        return "{:02x}".format(byte_string)
+    else:
+        return "".join(["{:02x}".format(x) for x in byte_string])
+
 def load(filehandle):
     '''
     shortcut for CandumpParser.load(...)
@@ -42,6 +51,43 @@ def _parse_log_line(logline):
 
 def _format_can_id(can_id):
     return "{:08x}".format(can_id)
+
+def _parse_iso_request(msg):
+    req_len = msg.can_data[0]#Length byte for ISO request
+    req_code = msg.can_data[1]#Request code (i.e. ReadDataByID)
+    req_pid = msg.can_data[2:2+req_len-1]
+
+    return (req_len, req_code, req_pid)
+
+def _parse_single_iso_response(msg, req_code, req_pid):
+    rsp_len = msg[0]
+    if rsp_len < len(req_pid) + 1:
+        raise NAKException
+
+    data_len = rsp_len - 1 - len(req_pid)
+    rsp_code = msg[1]
+    rsp_pid = msg[2:2+len(req_pid)]
+    rsp_data = msg[2+len(req_pid):2+len(req_pid)+data_len]
+
+    return (rsp_code, rsp_pid, rsp_data)
+
+def _parse_iso_transport_response(data, req_pid):
+    #assuming that if we get a message long enough to require transport layer
+    #that it's not an error response
+    #Also assuming that we've already trimmed the assembled data to length
+
+    rsp_code = data[0]
+    rsp_pid = data[1]
+    rsp_data = data[2:]
+
+    return (rsp_code, rsp_pid, rsp_data)
+
+
+
+
+class NAKException(Exception):
+    def __str__(self):
+        "Found a NAK response in log"
 
 
 class CANMessage(object):
@@ -112,6 +158,23 @@ class ISOMessage(CANMessage):
     def is_flow_control_message(self):
         return (self.can_data[0] & 0xF0) >> 4 == 3
 
+class ISORequest(object):#probably want to subclass ISOMessage eventually
+    def __init__(self, code, pid):
+        self.code = code
+        self.pid = pid
+
+    def __repr__(self):
+        return "<{:02x} {}>".format(self.code, hex_string(self.pid))
+
+class ISOResponse(ISORequest):
+    def __init__(self, code, pid, data):
+        super(ISOResponse, self).__init__(code, pid)
+        self.data = data
+
+    def __repr__(self):
+        return "<{:02x} {} {}>".format(self.code, hex_string(self.pid), hex_string(self.data))
+
+
 
 class ISOSession(object):
     def __init__(self, src, dst=0):#assume dst is ECM address
@@ -127,6 +190,26 @@ class ISOSession(object):
     def response_messages(self):
         return filter(lambda x: x.src == self.dst, self.messages)
 
+    @property
+    def request_message(self):
+        request_list = list(filter(lambda x: x.src == self.src and not x.is_flow_control_message, self.messages))
+        assert len(request_list) == 1, "Session has %d requests, probably parse error" % len(request_list)
+
+        return request_list[0]
+
+    @property
+    def parsed_request_message(self):
+        '''
+        Parses request message into request length, request code, and PID (or ID) requested
+
+        Returns tuple (req_len, req_code, req_pid)
+        '''
+        req = self.request_message
+        req_len = req.can_data[0]#Length byte for ISO request
+        req_code = req.can_data[1]#Request code (i.e. ReadDataByID)
+        req_pid = req.can_data[2:2+req_len]
+
+        return ISORequest(req_code, req_pid)
 
     @property
     def session_data_length(self):
@@ -142,7 +225,13 @@ class ISOSession(object):
             return resp.can_data[0]
 
     @property
+    def request_response(self):
+        return (self.parsed_request_message, self.response_data)
+
+    @property
     def response_data(self):
+        request = self.parsed_request_message
+        (req_code, req_pid) = (request.code, request.pid)
         data = []
         for msg in self.response_messages:
             if msg.is_first_message:
@@ -154,7 +243,16 @@ class ISOSession(object):
             elif not msg.is_transport:
                 data.append(msg.can_data)
 
-        return b','.join(data)[:self.session_data_length]
+        data = b''.join(data)
+
+        if data[0] & 0xF0 == 0:#This response didn't use transport layer
+            (rsp_code, rsp_pid, rsp_data) = _parse_single_iso_response(data, req_code, req_pid)
+        else:
+            data = data[:self.session_data_length]
+            (rsp_code, rsp_pid, rsp_data) = _parse_iso_transport_response(data, req_pid)
+
+        return ISOResponse(rsp_code, rsp_pid, rsp_data)
+
 
     
 
