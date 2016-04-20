@@ -13,7 +13,7 @@ call_line = re.compile('^FT:\d+,AT:\d+\s+\w{2},(CC|SC|RM|SM|CD)')
 rm_line = re.compile('\d{2},RM,(\d+),\d+,\d+,((?:[a-fA-F0-9]{2},){4})([a-fA-F0-9]{2}),([a-fA-F0-9]{2}),([a-fA-F0-9]{2}),((?:[a-fA-F0-9]{2},){4})([a-fA-F0-9]{2}),(.*)')
 
 #continuation of RM data. Make sure to test that line isn't a call line
-data_line = re.compile('^FT:\d+,AT:\d+\s+(\w{2},(?!CC|SC|RM|SM|CD|DV).*)')
+data_line = re.compile('^FT:\d+,AT:\d+\s+([a-fA-F0-9]{2},(?!CC|SC|RM|SM|CD|DV).*)')
 
 #groups are: length, msg type, CAN ID, extended address, data
 sm_line = re.compile('\d{2},SM,\d+,(\d+),(?:\d+,){2}([a-fA-F0-9]{2}),((?:[a-fA-F0-9]{2},){4})([a-fA-F0-9]{2}),(.*)')
