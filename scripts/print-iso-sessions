@@ -1,15 +1,27 @@
 #!/usr/bin/env python3
 
-import candump_parser
+import vehicle_log_parser
 import sys
+import argparse
 
-if len(sys.argv) < 2:
-    print('need a filename, dummy')
-    sys.exit(-1)
+arg_parser = argparse.ArgumentParser(description="Util script for dumping ISO sessions from various logfiles")
 
-f = open(sys.argv[1])
+arg_parser.add_argument('filename', metavar="Logfile name")
 
-cm = candump_parser.load(f)
+arg_parser.add_argument('format', metavar="Logfile format (must be candump or DPA)")
+
+args = arg_parser.parse_args()
+
+
+
+f = open(args.filename)
+
+if args.format.lower() == 'candump':
+    parser_load = vehicle_log_parser.load_candump
+elif args.format.lower() == 'dpa':
+    parser_load = vehicle_log_parser.load_dpa
+
+cm = parser_load(f)
 
 for session in cm.parse_iso_sessions():
     request, response = session.request_response

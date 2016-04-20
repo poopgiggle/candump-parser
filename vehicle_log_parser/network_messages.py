@@ -1,63 +1,8 @@
+from .utils import hex_string, prettify_bytes, hex_string_to_bytes
 import re
 import struct
 
 _msg_pattern = re.compile('\(([0-9\.]+)\) (can\d) ([A-F0-9]+)\#([A-F0-9]+)')
-
-def hex_string_to_bytes(hex_string, width=None):
-    '''
-    Take candump-style hex string (hex chars smooshed together with no spaces or commas) and convert to byte string
-
-    hex_string: the hex string to convert
-    width: expected width of the byte field (in nibbles). If this isn't specified, don't pad.
-
-    Returns byte string
-    '''
-
-    assert len(hex_string) % 2 ==0, "Incorrectly formatted byte string"
-    assert len(hex_string) < 128, "String is way too long for CAN purposes"
-
-    return bytes([int(hex_string[x:x+2], 16) for x in range(0, len(hex_string), 2)])
-
-def prettify_bytes(byte_string):
-    '''
-    Take byte string and return comma-separated hex value
-    '''
-
-    byte_list = struct.unpack("B"*len(byte_string), byte_string)
-    return ",".join(["{:02x}".format(x) for x in byte_list])
-
-def hex_string(byte_string):
-    '''
-    Take byte string and return unseparated hex string
-    '''
-    if type(byte_string) is int:
-        return "{:02x}".format(byte_string)
-    else:
-        return "".join(["{:02x}".format(x) for x in byte_string])
-
-def load(filehandle):
-    '''
-    shortcut for CandumpParser.load(...)
-    '''
-
-    return CandumpParser().load(filehandle)
-
-def _parse_log_line(logline):
-    (timestamp, interface, raw_can_id, raw_can_data) = _msg_pattern.match(logline).groups()
-    can_id = struct.unpack('>L', hex_string_to_bytes(raw_can_id))[0]#This may break on 11-bit IDs
-    can_data = hex_string_to_bytes(raw_can_data)
-
-    return (timestamp, interface, can_id, can_data)
-
-def _format_can_id(can_id):
-    return "{:08x}".format(can_id)
-
-def _parse_iso_request(msg):
-    req_len = msg.can_data[0]#Length byte for ISO request
-    req_code = msg.can_data[1]#Request code (i.e. ReadDataByID)
-    req_pid = msg.can_data[2:2+req_len-1]
-
-    return (req_len, req_code, req_pid)
 
 def _parse_single_iso_response(msg, req_code, req_pid):
     rsp_len = msg[0]
@@ -71,6 +16,17 @@ def _parse_single_iso_response(msg, req_code, req_pid):
 
     return (rsp_code, rsp_pid, rsp_data)
 
+
+def _format_can_id(can_id):
+    return "{:08x}".format(can_id)
+
+def _parse_candump_log_line(logline):
+    (timestamp, interface, raw_can_id, raw_can_data) = _msg_pattern.match(logline).groups()
+    can_id = struct.unpack('>L', hex_string_to_bytes(raw_can_id))[0]#This may break on 11-bit IDs
+    can_data = hex_string_to_bytes(raw_can_data)
+
+    return (timestamp, interface, can_id, can_data)
+
 def _parse_iso_transport_response(data, req_pid):
     #assuming that if we get a message long enough to require transport layer
     #that it's not an error response
@@ -82,13 +38,12 @@ def _parse_iso_transport_response(data, req_pid):
 
     return (rsp_code, rsp_pid, rsp_data)
 
+def _parse_iso_request(msg):
+    req_len = msg.can_data[0]#Length byte for ISO request
+    req_code = msg.can_data[1]#Request code (i.e. ReadDataByID)
+    req_pid = msg.can_data[2:2+req_len-1]
 
-
-
-class NAKException(Exception):
-    def __str__(self):
-        "Found a NAK response in log"
-
+    return (req_len, req_code, req_pid)
 
 class CANMessage(object):
 
@@ -103,8 +58,8 @@ class CANMessage(object):
             self.can_data = can_data
 
 
-    def parse_log_line(self, logline):
-        (self.timestamp, self.interface, self.can_id, self.can_data) = _parse_log_line(logline)
+    def parse_candump_log_line(self, logline):
+        (self.timestamp, self.interface, self.can_id, self.can_data) = _parse_candump_log_line(logline)
         return self
 
     def __repr__(self):
@@ -117,6 +72,8 @@ class CANMessage(object):
         else:
             disp_can_data = None
         return "<{} {} {} {}>".format(self.timestamp, self.interface, disp_can_id, disp_can_data)
+
+
 
 class ISOMessage(CANMessage):
 
@@ -158,6 +115,12 @@ class ISOMessage(CANMessage):
     def is_flow_control_message(self):
         return (self.can_data[0] & 0xF0) >> 4 == 3
 
+class NAKException(Exception):
+    def __str__(self):
+        "Found a NAK response in log"
+
+
+
 class ISORequest(object):#probably want to subclass ISOMessage eventually
     def __init__(self, code, pid):
         self.code = code
@@ -181,6 +144,8 @@ class ISOSession(object):
         self.src = src
         self.dst = dst
         self.messages = []
+        self.iso_request = None
+        self.iso_response_data = None
 
     def add(self, iso_msg):
         self.messages.append(iso_msg)
@@ -204,6 +169,9 @@ class ISOSession(object):
 
         Returns tuple (req_len, req_code, req_pid)
         '''
+        if self.iso_request:
+            return self.iso_request
+
         req = self.request_message
         req_len = req.can_data[0]#Length byte for ISO request
         req_code = req.can_data[1]#Request code (i.e. ReadDataByID)
@@ -230,6 +198,8 @@ class ISOSession(object):
 
     @property
     def response_data(self):
+        if self.iso_response_data:
+            return self.iso_response_data
         request = self.parsed_request_message
         (req_code, req_pid) = (request.code, request.pid)
         data = []
@@ -256,59 +226,4 @@ class ISOSession(object):
 
     
 
-
-
-class CandumpParser(object):
-
-    def __init__(self):
-        self.messages = []
-        
-
-    def load(self, f):
-        '''
-        Load a candump file from a file handle and parse the contents
-
-        f: file handle
-        '''
-        for line in f.readlines():
-            message = CANMessage().parse_log_line(line)
-            self.messages.append(message)
-
-        return self
-
-    @property
-    def iso_messages(self):
-        return [ISOMessage().from_can(x).parse_iso() for x in filter(lambda x: x.can_id and x.can_id & 0xFFFF0000 == 0x18DA0000, self.messages)]
-
-    def parse_iso_sessions(self, src_addr=0xF9):
-        '''
-        Extract ISO15765 requests/responses.
-
-        src_addr: the source address making the request. 0xf9 by default.
-
-        Returns list of ISOSession objects
-        '''
-        sessions = []
-        iso_messages = self.iso_messages
-
-        #find first ISO message from src
-        first_sent = None
-        for i, msg in enumerate(iso_messages):
-            if msg.src ==src_addr:
-                first_sent = i
-                break
-
-        if first_sent is None:
-            return
-
-        this_session = ISOSession(src_addr).add(iso_messages[first_sent])
-        
-        for msg in iso_messages[first_sent+1:]:
-            if msg.src == src_addr and not msg.is_flow_control_message:
-                sessions.append(this_session)
-                this_session = ISOSession(src_addr).add(msg)
-            else:
-                this_session.add(msg)
-
-        return sessions
 
