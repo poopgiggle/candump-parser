@@ -6,9 +6,9 @@ import argparse
 
 arg_parser = argparse.ArgumentParser(description="Util script for dumping ISO sessions from various logfiles")
 
-arg_parser.add_argument('filename', metavar="Logfile name")
+arg_parser.add_argument('filename', help="Logfile name")
 
-arg_parser.add_argument('format', metavar="Logfile format (must be candump or DPA)")
+arg_parser.add_argument('format', help="Logfile format (must be candump or DPA)")
 
 args = arg_parser.parse_args()
 
