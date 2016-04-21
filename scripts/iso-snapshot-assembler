@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+
+import vehicle_log_parser
+import argparse
+import sys
+
+#from parsing_extras import parse_snapshot #Holdover from a more specialized usage
+
+arg_parser = argparse.ArgumentParser(description="sandbox program for ISO dumps")
+
+arg_parser.add_argument('filename')
+arg_parser.add_argument('format', help="logfile format (candump or dpa)")
+arg_parser.add_argument('req_code', help="Request code of interest (different codes may share same pid)")
+arg_parser.add_argument('lowpid', help="low pid, hex formatted")
+arg_parser.add_argument('highpid', help="high pid, hex formatted")
+
+#arg_parser.add_argument('--raw', help="display raw data bytes", action='store_true')
+
+arg_parser.add_argument('--slice', help="give range of bytes to display", nargs=2, default=[0, None], type=int)
+
+arg_parser.add_argument('--length', help="display length of collected data",
+                        action="store_true")
+
+
+args = arg_parser.parse_args()
+
+try:
+    req_code = int(args.req_code, 16)
+    low_pid = int(args.lowpid, 16)
+    high_pid = int(args.highpid, 16)
+except:
+    print('pids and request code must be hex formatted')
+    sys.exit(-1)
+
+if args.format.lower() == 'candump':
+    parser_load = vehicle_log_parser.load_candump
+elif args.format.lower() == 'dpa':
+    parser_load = vehicle_log_parser.load_dpa
+else:
+    print("Invalid logfile format specified")
+    sys.exit(-1)
+
+with open(args.filename) as f:
+    sessions = parser_load(f).parse_iso_sessions()
+
+
+datapage = b''.join([x.response_data.data for x in sessions if x.response_data.pid in range(low_pid, high_pid)
+                     and x.parsed_request_message.code == req_code])
+
+low, high = args.slice
+print(vehicle_log_parser.utils.prettify_bytes(datapage))
+
+if args.length:
+    print("Total length: %d" % len(datapage))
+
+
+
+

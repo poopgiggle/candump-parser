@@ -20,6 +20,9 @@ if args.format.lower() == 'candump':
     parser_load = vehicle_log_parser.load_candump
 elif args.format.lower() == 'dpa':
     parser_load = vehicle_log_parser.load_dpa
+else:
+    print("Invalid logfile format specified")
+    sys.exit(-1)
 
 cm = parser_load(f)
 
