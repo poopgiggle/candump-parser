@@ -3,20 +3,34 @@ import struct
 from .network_messages import ISOSession, ISORequest, ISOResponse
 from .utils import unpack_csv, csv_hex_to_bytes, prettify_bytes
 
+log_line_prefix = '^FT:\d+,AT:\d+\s+'
+
 #All log lines that we're interested in seem to start with this
 #Not totally sure what the numbers are but might as well capture them
 log_line = re.compile('^FT:(\d+),AT:(\d+).*')
 
 call_line = re.compile('^FT:\d+,AT:\d+\s+\w{2},(CC|SC|RM|SM|CD)')
 
+#groups: client_id, protocol
+cc_line = re.compile(log_line_prefix+'XX,CC,\d{2},(\d{2}),\d+?,([^,]+?),.*')
+
+#the one captured group is the client number
+rm_line = re.compile('^FT:\d+,AT:\d+\s+(\d{2}),RM,.*')
+
 #groups are: length, timestamp, echo byte, indicator status, msg type, CAN ID, extended address, data
-rm_line = re.compile('\d{2},RM,(\d+),\d+,\d+,((?:[a-fA-F0-9]{2},){4})([a-fA-F0-9]{2}),([a-fA-F0-9]{2}),([a-fA-F0-9]{2}),((?:[a-fA-F0-9]{2},){4})([a-fA-F0-9]{2}),(.*)')
+iso_rm_line = re.compile('\d{2},RM,(\d+),\d+,\d+,((?:[a-fA-F0-9]{2},){4})([a-fA-F0-9]{2}),([a-fA-F0-9]{2}),([a-fA-F0-9]{2}),((?:[a-fA-F0-9]{2},){4})([a-fA-F0-9]{2}),(.*)')
+
+#groups are: client id, timestamp, j1708 data
+j1708_rm_line = re.compile(log_line_prefix+'(\d{2}),RM,\d{2},\d+,\d+,((?:[a-fA-F0-9]{2},){4})(.*)')
 
 #continuation of RM data. Make sure to test that line isn't a call line
 data_line = re.compile('^FT:\d+,AT:\d+\s+([a-fA-F0-9]{2},(?!CC|SC|RM|SM|CD|DV).*)')
 
 #groups are: length, msg type, CAN ID, extended address, data
-sm_line = re.compile('\d{2},SM,\d+,(\d+),(?:\d+,){2}([a-fA-F0-9]{2}),((?:[a-fA-F0-9]{2},){4})([a-fA-F0-9]{2}),(.*)')
+iso_sm_line = re.compile('\d{2},SM,\d+,(\d+),(?:\d+,){2}([a-fA-F0-9]{2}),((?:[a-fA-F0-9]{2},){4})([a-fA-F0-9]{2}),(.*)')
+
+#groups are: client id, timestamp, j1708 data
+j1708_sm_line = re.compile('(\d{2}),SM,\d{2},((?:[a-fA-F0-9]{1,2},){4})(.*)')
 
 def _parse_data_line(msg_line):
     match = data_line.search(msg_line)
@@ -27,9 +41,12 @@ def _parse_data_line(msg_line):
     data = csv_hex_to_bytes(data)
     return data
 
+def _parse_j1708_read_message_line(msg_line):
+	match = j1708_rm_line.match(msg_line)
 
-def _parse_read_message_line(msg_line):
-    match = rm_line.search(msg_line)
+
+def _parse_iso_read_message_line(msg_line):
+    match = iso_rm_line.search(msg_line)
     if not match:
         return (None,) * 8
 
@@ -45,8 +62,8 @@ def _parse_read_message_line(msg_line):
 
     return (length, timestamp, echo, ind_status, msg_type, can_id, ext_addr, data)
 
-def _parse_send_message_line(msg_line):
-    match = sm_line.search(msg_line)
+def _parse_iso_send_message_line(msg_line):
+    match = iso_sm_line.search(msg_line)
     if not match:
         return (None,) * 5
 
@@ -85,6 +102,22 @@ class DPAParser(object):
 
         return self
 
+    def get_1708_traffic(self):
+    	'''
+    	extract J1708 traffic from DPA logfile
+    	'''
+    	j1708_client = None
+    	j1708_messages = []
+    	for log_line in self.log_lines:
+    		if cc_line.match(log_line):
+    			(client_id_raw, protocol) = cc_line.match(log_line).groups()
+    			client_id = int(client_id_raw)
+    			if protocol == "J1708":
+    				j1708_client = client_id
+    		elif j1708_client is None:
+    			continue
+    		elif:
+
     def parse_iso_sessions(self, src_addr=0xF9):
         '''
         Extract ISO15765 requests/responses.
@@ -99,12 +132,12 @@ class DPAParser(object):
         for l_line in self.log_lines:
             if not log_line.match(l_line):
                 continue #random line we don't care about
-            elif sm_line.search(l_line):
+            elif iso_sm_line.search(l_line):
                 if current_session is not None:
                     this_response = ISOResponse(current_rm_code, current_rm_pid, current_rm_data)
                     current_session.iso_response_data = this_response
                     iso_sessions.append(current_session)
-                (length, msg_type, can_id, ext_addr, data) = _parse_send_message_line(l_line)
+                (length, msg_type, can_id, ext_addr, data) = _parse_iso_send_message_line(l_line)
                 if can_id & 0xFFFF0000 != 0x18DA0000:
                     current_session = None
                     continue
@@ -113,10 +146,10 @@ class DPAParser(object):
                 this_request = ISORequest(code, pid)
                 current_session = ISOSession(src_addr)
                 current_session.iso_request = this_request
-            elif rm_line.search(l_line):
+            elif iso_rm_line.search(l_line):
                 if current_session is None:
                     continue#probably a response we don't care about
-                (length, timestamp, echo, ind_status, msg_type, can_id, ext_addr, data) = _parse_read_message_line(l_line)
+                (length, timestamp, echo, ind_status, msg_type, can_id, ext_addr, data) = _parse_iso_read_message_line(l_line)
                 if ind_status != 0 or echo != 0:
                     continue
                 assert(can_id & 0xFFFF0000 == 0x18DA0000), "RM non-ISO message, or fix the parser"
