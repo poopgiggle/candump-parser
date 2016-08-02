@@ -41,8 +41,33 @@ def _parse_data_line(msg_line):
     data = csv_hex_to_bytes(data)
     return data
 
-def _parse_j1708_read_message_line(msg_line):
-	match = j1708_rm_line.match(msg_line)
+def _parse_j1708_helper(msg_line, j1708_client_num, regex_object):
+    '''
+    Helper function for _parse_j1708_{read,send}_message_line.
+    Got that DRY shit on lock.
+    '''
+    match = regex_object.match(msg_line)
+    if not match:
+        return None
+    try:
+        (raw_client_id, raw_timestamp, raw_data) = match.groups()
+        client_id = int(raw_client_id)
+        if client_id != j1708_client_num:
+            return None
+
+        timestamp = unpack_csv(">L", raw_timestamp)[0]
+        data = csv_hex_to_bytes(raw_data)
+
+        return (client_id, timestamp, data)
+    except ValueError:
+        return None
+
+def _parse_j1708_read_message_line(msg_line, j1708_client_num):
+    return _parse_j1708_helper(msg_line, j1708_client_num, j1708_rm_line)
+
+def _parse_j1708_send_message_line(msg_line, j1708_client_num):
+    return _parse_j1708_helper(msg_line, j1708_client_num, j1708_sm_line)
+    
 
 
 def _parse_iso_read_message_line(msg_line):
@@ -103,20 +128,25 @@ class DPAParser(object):
         return self
 
     def get_1708_traffic(self):
-    	'''
-    	extract J1708 traffic from DPA logfile
-    	'''
-    	j1708_client = None
-    	j1708_messages = []
-    	for log_line in self.log_lines:
-    		if cc_line.match(log_line):
-    			(client_id_raw, protocol) = cc_line.match(log_line).groups()
-    			client_id = int(client_id_raw)
-    			if protocol == "J1708":
-    				j1708_client = client_id
-    		elif j1708_client is None:
-    			continue
-    		elif:
+        '''
+        extract J1708 traffic from DPA logfile
+        '''
+        j1708_client = None
+        j1708_messages = []
+        for log_line in self.log_lines:
+            if cc_line.match(log_line):
+                (client_id_raw, protocol) = cc_line.match(log_line).groups()
+                client_id = int(client_id_raw)
+                if protocol == "J1708":
+                    j1708_client = client_id
+            elif _parse_j1708_read_message_line(log_line, j1708_client) is not None:
+                (client_id, timestamp, data) = _parse_j1708_read_message_line(log_line, j1708_client)
+                j1708_messages.append(("RM",data,))
+            elif _parse_j1708_send_message_line(log_line, j1708_client) is not None:
+                (client_id, timestamp, data) = _parse_j1708_send_message_line(log_line, j1708_client)
+                j1708_messages.append(("SM", data,))
+
+        return j1708_messages
 
     def parse_iso_sessions(self, src_addr=0xF9):
         '''
