@@ -30,7 +30,7 @@ data_line = re.compile('^FT:\d+,AT:\d+\s+([a-fA-F0-9]{2},(?!CC|SC|RM|SM|CD|DV).*
 iso_sm_line = re.compile('\d{2},SM,\d+,(\d+),(?:\d+,){2}([a-fA-F0-9]{2}),((?:[a-fA-F0-9]{2},){4})([a-fA-F0-9]{2}),(.*)')
 
 #groups are: client id, timestamp, j1708 data
-j1708_sm_line = re.compile('(\d{2}),SM,\d{2},((?:[a-fA-F0-9]{1,2},){4})(.*)')
+j1708_sm_line = re.compile(log_line_prefix+'(\d{2}),SM,\d{2},((?:[a-fA-F0-9]{1,2},){4})(.*)')
 
 def _parse_data_line(msg_line):
     match = data_line.search(msg_line)
