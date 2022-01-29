@@ -13,10 +13,13 @@ def hex_string_to_bytes(hex_string, width=None):
     Returns byte string
     '''
 
-    assert len(hex_string) % 2 ==0, "Incorrectly formatted byte string"
+    while width and len(hex_string) < width:
+        hex_string = '0' + hex_string
+
+    assert len(hex_string) % 2 == 0, "Incorrectly formatted byte string"
     assert len(hex_string) < 128, "String is way too long for CAN purposes"
 
-    return bytes([int(hex_string[x:x+2], 16) for x in range(0, len(hex_string), 2)])
+    return bytearray([int(hex_string[x:x+2], 16) for x in range(0, len(hex_string), 2)])
 
 def csv_hex_to_bytes(hex_string):
     #trim trailing comma
