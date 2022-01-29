@@ -17,15 +17,19 @@ def _parse_single_iso_response(msg, req_code, req_pid):
     return (rsp_code, rsp_pid, rsp_data)
 
 
-def _format_can_id(can_id):
-    return "{:08x}".format(can_id)
+def _format_can_id(can_id, extended):
+    if extended:
+        return "{:08x}".format(can_id)
+    else:
+        return "{:03x}".format(can_id)
 
 def _parse_candump_log_line(logline):
     (timestamp, interface, raw_can_id, raw_can_data) = _msg_pattern.match(logline).groups()
-    can_id = struct.unpack('>L', hex_string_to_bytes(raw_can_id))[0]#This may break on 11-bit IDs
+    extended = len(raw_can_id) >= 8
+    can_id = struct.unpack('>L', hex_string_to_bytes(raw_can_id,8))[0]
     can_data = hex_string_to_bytes(raw_can_data)
 
-    return (timestamp, interface, can_id, can_data)
+    return (timestamp, interface, can_id, can_data, extended)
 
 def _parse_iso_transport_response(data, req_pid):
     #assuming that if we get a message long enough to require transport layer
@@ -47,7 +51,7 @@ def _parse_iso_request(msg):
 
 class CANMessage(object):
 
-    def __init__(self, timestamp=None, interface=None, can_id=None, can_data=None):
+    def __init__(self, timestamp=None, interface=None, can_id=None, can_data=None, extended=True):
         if timestamp:
             self.timestamp = timestamp
         if interface:
@@ -56,15 +60,17 @@ class CANMessage(object):
             self.can_id = can_id
         if can_data:
             self.can_data = can_data
+        if extended:
+            self.extended = extended
 
 
     def parse_candump_log_line(self, logline):
-        (self.timestamp, self.interface, self.can_id, self.can_data) = _parse_candump_log_line(logline)
+        (self.timestamp, self.interface, self.can_id, self.can_data, self.extended) = _parse_candump_log_line(logline)
         return self
 
     def __repr__(self):
         if self.can_id:
-            disp_can_id = _format_can_id(self.can_id)
+            disp_can_id = _format_can_id(self.can_id,self.extended)
         else:
             disp_can_id = None
         if self.can_data:
